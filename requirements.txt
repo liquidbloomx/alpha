@@ -39,4 +39,5 @@ urllib3
 uvicorn
 uvloop
 xattr
+dotenv
 yt-dlp[default,curl-cffi]
