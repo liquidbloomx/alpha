@@ -6,7 +6,6 @@ Config.load()
 
 from datetime import datetime
 from logging import Formatter
-
 from pytz import timezone
 
 from . import LOGGER, bot_loop
@@ -25,6 +24,20 @@ async def main():
         update_qb_options,
         update_variables,
     )
+
+    # ----------------------------------------------------------
+    # 🔧 SAFETY PATCH: Disable upstream auto-update permanently.
+    # This ensures your modified files (like task_manager.py)
+    # are never overwritten by WZML-X update checks.
+    # ----------------------------------------------------------
+    import os
+    if os.getenv("UPSTREAM_REPO"):
+        os.environ["UPSTREAM_REPO"] = "None"
+        LOGGER.warning(
+            "Auto-update disabled: UPSTREAM_REPO was set. "
+            "Skipping upstream pull to preserve local fixes."
+        )
+    # ----------------------------------------------------------
 
     await load_settings()
 
