@@ -21,8 +21,9 @@ from .links_utils import is_gdrive_id
 from .status_utils import get_readable_time, get_readable_file_size, get_specific_tasks
 
 
+# ---------------- INT CONVERSION HELPERS ----------------
 def coerce_int(value, default=0):
-    """Coerce config values to int safely."""
+    """Convert string/float/None to int safely."""
     try:
         if value is None:
             return default
@@ -37,7 +38,9 @@ def coerce_int(value, default=0):
 
 
 def CINT(attr_name, default=0):
+    """Get integer config value from Config."""
     return coerce_int(getattr(Config, attr_name, None), default)
+# ---------------------------------------------------------
 
 
 async def stop_duplicate_check(listener):
@@ -79,13 +82,24 @@ async def stop_duplicate_check(listener):
 
 
 async def check_running_tasks(listener, state="dl"):
-    all_limit = CINT("QUEUE_ALL")
-    state_limit = CINT("QUEUE_DOWNLOAD") if state == "dl" else CINT("QUEUE_UPLOAD")
+    """Ensure queue limits are respected."""
+    try:
+        all_limit = int(getattr(Config, "QUEUE_ALL", 0))
+    except Exception:
+        all_limit = 0
+    try:
+        state_limit = int(
+            getattr(Config, "QUEUE_DOWNLOAD" if state == "dl" else "QUEUE_UPLOAD", 0)
+        )
+    except Exception:
+        state_limit = 0
+
     event = None
     is_over_limit = False
     async with queue_dict_lock:
         if state == "up" and listener.mid in non_queued_dl:
             non_queued_dl.remove(listener.mid)
+
         if (
             (all_limit or state_limit)
             and not listener.force_run
@@ -95,11 +109,19 @@ async def check_running_tasks(listener, state="dl"):
             dl_count = len(non_queued_dl)
             up_count = len(non_queued_up)
             t_count = dl_count if state == "dl" else up_count
+
+            # fix comparison by enforcing int
+            if isinstance(all_limit, str):
+                all_limit = coerce_int(all_limit, 0)
+            if isinstance(state_limit, str):
+                state_limit = coerce_int(state_limit, 0)
+
             is_over_limit = (
                 all_limit
                 and dl_count + up_count >= all_limit
                 and (not state_limit or t_count >= state_limit)
             ) or (state_limit and t_count >= state_limit)
+
             if is_over_limit:
                 event = Event()
                 if state == "dl":
@@ -111,6 +133,7 @@ async def check_running_tasks(listener, state="dl"):
                 non_queued_up.add(listener.mid)
             else:
                 non_queued_dl.add(listener.mid)
+
     return is_over_limit, event
 
 
@@ -254,6 +277,15 @@ async def pre_task_check(message):
     if await CustomFilters.sudo("", message):
         return msg, button
     user_id = (message.from_user or message.sender_chat).id
+
+    # force integer cast for Mongo-loaded configs
+    for key in ("BOT_MAX_TASKS", "USER_MAX_TASKS"):
+        val = getattr(Config, key, 0)
+        try:
+            setattr(Config, key, int(val))
+        except Exception:
+            setattr(Config, key, 0)
+
     if CINT("RSS_CHAT") and user_id == int(getattr(Config, "RSS_CHAT", 0)):
         return msg, button
     if message.chat.type != message.chat.type.BOT:
@@ -266,32 +298,23 @@ async def pre_task_check(message):
             _msg, button = await check_botpm(message, button)
             if _msg:
                 msg.append(_msg)
+
     if (uti := CINT("USER_TIME_INTERVAL")) and (ut := await user_interval_check(user_id)):
         msg.append(
             f"┠ <b>Waiting Time</b> → {get_readable_time(ut)}\n┠ <i>User's Time Interval Restrictions</i> → {get_readable_time(uti)}"
         )
 
-    # ---- FIXED TYPE HANDLING HERE ----
-    try:
-        bmax_tasks = int(getattr(Config, "BOT_MAX_TASKS", 0))
-    except Exception:
-        bmax_tasks = 0
-
+    bmax_tasks = CINT("BOT_MAX_TASKS")
     if bmax_tasks > 0 and len(await get_specific_tasks("All", False)) >= bmax_tasks:
         msg.append(
             f"┠ Max Concurrent Bot's Tasks Limit exceeded.\n┠ Bot Tasks Limit : {bmax_tasks} task"
         )
 
-    try:
-        maxtask = int(getattr(Config, "USER_MAX_TASKS", 0))
-    except Exception:
-        maxtask = 0
-
+    maxtask = CINT("USER_MAX_TASKS")
     if maxtask > 0 and len(await get_specific_tasks("All", user_id)) >= maxtask:
         msg.append(
             f"┠ Max Concurrent User's Task(s) Limit exceeded!\n┠ User Task Limit : {maxtask} tasks"
         )
-    # ----------------------------------
 
     token_msg, button = await verify_token(user_id, button)
     if token_msg is not None:
@@ -307,4 +330,4 @@ async def pre_task_check(message):
         return final_msg, button
 
     return None, None
-        
+            
