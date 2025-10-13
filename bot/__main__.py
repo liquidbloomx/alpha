@@ -1,5 +1,15 @@
 # ruff: noqa: E402
 
+# ─────────────────────────────────────────────
+# 🧩 AutoFix import — cleans MongoDB + Aria2 before startup
+try:
+    from .core.autofix import auto_fix_mongo_and_aria
+    print("[AutoFix] Running startup cleanup...")
+    auto_fix_mongo_and_aria()
+except Exception as e:
+    print(f"[AutoFix] ⚠️ Failed to run: {e}")
+# ─────────────────────────────────────────────
+
 from .core.config_manager import Config
 Config.load()
 
