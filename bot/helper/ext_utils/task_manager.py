@@ -42,7 +42,8 @@ def coerce_int(value, default=0):
 
 def CINT(attr_name, default=0):
     """Helper to read integer config attributes from Config safely."""
-    return coerce_int(getattr(Config, attr_name, None), default)
+    val = getattr(Config, attr_name, None)
+    return coerce_int(val, default)
 # ─────────────────────────────────────────────
 
 
@@ -214,10 +215,11 @@ async def limit_checker(listener, yt_playlist=0):
                     if size >= byte_limit:
                         limit_exceeded = f"┠ <b>{name} Limit</b> → {get_readable_file_size(byte_limit)}"
 
-                LOGGER.info(
-                    f"{name} Limit Breached: {listener.name} & Size: {get_readable_file_size(size)}"
-                )
-                break
+                if limit_exceeded:
+                    LOGGER.info(
+                        f"{name} Limit Breached: {listener.name} & Size: {get_readable_file_size(size)}"
+                    )
+                    break
         return limit_exceeded
 
     limits = [
@@ -273,7 +275,7 @@ async def pre_task_check(message):
 
     user_id = (message.from_user or message.sender_chat).id
 
-    if CINT("RSS_CHAT") and user_id == int(getattr(Config, "RSS_CHAT", 0)):
+    if CINT("RSS_CHAT") and user_id == coerce_int(getattr(Config, "RSS_CHAT", 0)):
         return msg, button
 
     if message.chat.type != message.chat.type.BOT:
@@ -296,13 +298,13 @@ async def pre_task_check(message):
     bmax_tasks = CINT("BOT_MAX_TASKS")
     if bmax_tasks > 0 and len(await get_specific_tasks("All", False)) >= bmax_tasks:
         msg.append(
-            f"┠ Max Concurrent Bot's Tasks Limit exceeded.\n┠ Bot Tasks Limit : {bmax_tasks} task"
+            f"┠ Max Concurrent Bot's Tasks Limit exceeded.\n┠ Bot Tasks Limit : {bmax_tasks} task(s)"
         )
 
     maxtask = CINT("USER_MAX_TASKS")
     if maxtask > 0 and len(await get_specific_tasks("All", user_id)) >= maxtask:
         msg.append(
-            f"┠ Max Concurrent User's Task(s) Limit exceeded! \n┠ User Task Limit : {maxtask} tasks"
+            f"┠ Max Concurrent User's Task(s) Limit exceeded!\n┠ User Task Limit : {maxtask} task(s)"
         )
 
     token_msg, button = await verify_token(user_id, button)
