@@ -15,35 +15,42 @@ from ...core.config_manager import Config
 from ..mirror_leech_utils.gdrive_utils.search import GoogleDriveSearch
 from ..telegram_helper.filters import CustomFilters
 from ..telegram_helper.tg_utils import check_botpm, forcesub, verify_token
-from .bot_utils import get_telegraph_list, sync_to_async, safe_int
+from .bot_utils import get_telegraph_list, sync_to_async
 from .files_utils import get_base_name, check_storage_threshold
 from .links_utils import is_gdrive_id
 from .status_utils import get_readable_time, get_readable_file_size, get_specific_tasks
-
 
 # ─────────────────────────────────────────────
 # 🧠 Universal integer coercion helpers
 def coerce_int(value, default=0):
     """
-    Coerce any config value (str/int/float/None) to int safely.
+    Safely convert any value (str/int/float/None) to int.
+    Prevents '>' comparison TypeErrors in Heroku restarts.
     """
     try:
         if value is None:
             return default
         if isinstance(value, (int, float)):
             return int(value)
-        return int(str(value).strip())
-    except Exception:
-        try:
-            return safe_int(value)
-        except Exception:
+        s = str(value).strip()
+        if s.lower() in ("", "none", "null"):
             return default
+        return int(float(s))
+    except Exception:
+        return default
 
 
 def CINT(attr_name, default=0):
-    """Helper to read integer config attributes from Config safely."""
-    val = getattr(Config, attr_name, None)
-    return coerce_int(val, default)
+    """
+    Helper to read integer config attributes from Config safely.
+    This version re-imports Config each time to avoid stale values.
+    """
+    try:
+        from ...core.config_manager import Config
+        raw = getattr(Config, attr_name, default)
+        return coerce_int(raw, default)
+    except Exception:
+        return default
 # ─────────────────────────────────────────────
 
 
