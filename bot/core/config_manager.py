@@ -119,6 +119,25 @@ class Config:
     YT_CATEGORY_ID = 22
     YT_PRIVACY_STATUS = "unlisted"
 
+    # ================== INTERNAL HELPERS ===================
+
+    @classmethod
+    def _sanitize_types(cls, data: dict):
+        """Convert string-based numeric/boolean values to correct Python types."""
+        for key, value in list(data.items()):
+            if isinstance(value, str):
+                v = value.strip().lower()
+                if v.isdigit():
+                    data[key] = int(v)
+                elif v.replace(".", "", 1).isdigit():
+                    try:
+                        data[key] = float(v)
+                    except Exception:
+                        pass
+                elif v in ("true", "false"):
+                    data[key] = v == "true"
+        return data
+
     @classmethod
     def get(cls, key):
         return getattr(cls, key) if hasattr(cls, key) else None
@@ -217,6 +236,11 @@ class Config:
 
     @classmethod
     def load_dict(cls, config_dict):
+        """Load dictionary from DB safely, with type sanitization."""
+        if not isinstance(config_dict, dict):
+            return
+        config_dict = cls._sanitize_types(config_dict)
+
         for key, value in config_dict.items():
             if hasattr(cls, key):
                 if key == "DEFAULT_UPLOAD" and value != "gd":
@@ -237,6 +261,7 @@ class Config:
                         value = []
                 value = cls._convert_env_type(key, value)
                 setattr(cls, key, value)
+
         for key in ["BOT_TOKEN", "OWNER_ID", "TELEGRAM_API", "TELEGRAM_HASH"]:
             value = getattr(cls, key)
             if isinstance(value, str):
@@ -251,3 +276,4 @@ class BinConfig:
     FFMPEG_NAME = "mediaforge"
     RCLONE_NAME = "ghostdrive"
     SABNZBD_NAME = "newsripper"
+    
