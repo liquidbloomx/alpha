@@ -30,9 +30,11 @@ from .tg_client import TgClient
 from .torrent_manager import TorrentManager
 
 
-# ====================== TYPE FIXER ============================
+# ============================================================
+# Type sanitization utility to fix string-based numeric values
+# ============================================================
 def _sanitize_types(cfg: dict):
-    """Convert MongoDB string values into proper Python types."""
+    """Convert MongoDB string values into correct Python types."""
     for key, value in list(cfg.items()):
         if isinstance(value, str):
             v = value.strip().lower()
@@ -46,7 +48,7 @@ def _sanitize_types(cfg: dict):
             elif v in ("true", "false"):
                 cfg[key] = v == "true"
     return cfg
-# ===============================================================
+# ============================================================
 
 
 async def update_qb_options():
@@ -124,14 +126,21 @@ async def load_settings():
             )
             config_dict.update(config_file)
             if config_dict:
-                _sanitize_types(config_dict)
+                config_dict = _sanitize_types(config_dict)
                 Config.load_dict(config_dict)
         else:
             LOGGER.info("Updating.. Saved Config imported from MongoDB")
             config_dict = await database.db.settings.config.find_one({"_id": BOT_ID}, {"_id": 0})
             if config_dict:
-                _sanitize_types(config_dict)
+                config_dict = _sanitize_types(config_dict)
                 Config.load_dict(config_dict)
+
+        # 🔹 force save back sanitized values to MongoDB
+        await database.db.settings.config.update_one(
+            {"_id": BOT_ID},
+            {"$set": Config.get_all()},
+            upsert=True,
+        )
 
         # Restore files from DB
         if pf_dict := await database.db.settings.files.find_one({"_id": BOT_ID}, {"_id": 0}):
@@ -174,16 +183,10 @@ async def load_settings():
                     dir_path = ospath.dirname(file_path)
                     if not await aiopath.exists(dir_path):
                         await makedirs(dir_path)
-                    if file_path.startswith("cookies/") and file_path.endswith(".txt"):
-                        async with aiopen(file_path, "wb") as f:
-                            if isinstance(content, str):
-                                content = content.encode("utf-8")
-                            await f.write(content)
-                    else:
-                        async with aiopen(file_path, "wb+") as f:
-                            if isinstance(content, str):
-                                content = content.encode("utf-8")
-                            await f.write(content)
+                    async with aiopen(file_path, "wb+") as f:
+                        if isinstance(content, str):
+                            content = content.encode("utf-8")
+                        await f.write(content)
 
                 for key, path in paths.items():
                     if row.get(key):
@@ -205,7 +208,7 @@ async def load_settings():
 async def save_settings():
     if database.db is None:
         return
-    config_file = Config.to_dict()
+    config_file = Config.get_all()
     await database.db.settings.config.update_one({"_id": TgClient.ID}, {"$set": config_file}, upsert=True)
     if await database.db.settings.aria2c.find_one({"_id": TgClient.ID}) is None:
         await database.db.settings.aria2c.update_one({"_id": TgClient.ID}, {"$set": aria2_options}, upsert=True)
@@ -302,4 +305,4 @@ async def load_configurations():
             await TorrentManager.qbittorrent.app.set_preferences(qbit_options)
         except Exception as e:
             LOGGER.error(f"Failed to configure qBittorrent: {e}")
-                    
+            
