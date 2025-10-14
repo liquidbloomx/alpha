@@ -5,7 +5,6 @@ from os import environ, getenv, path as ospath
 from aiofiles import open as aiopen
 from aiofiles.os import makedirs, remove, path as aiopath
 from aioshutil import rmtree
-
 from sabnzbdapi.exception import APIResponseError
 
 from .. import (
@@ -31,12 +30,29 @@ from .tg_client import TgClient
 from .torrent_manager import TorrentManager
 
 
+# ====================== TYPE FIXER ============================
+def _sanitize_types(cfg: dict):
+    """Convert MongoDB string values into proper Python types."""
+    for key, value in list(cfg.items()):
+        if isinstance(value, str):
+            v = value.strip().lower()
+            if v.isdigit():
+                cfg[key] = int(v)
+            elif v.replace(".", "", 1).isdigit():
+                try:
+                    cfg[key] = float(v)
+                except Exception:
+                    pass
+            elif v in ("true", "false"):
+                cfg[key] = v == "true"
+    return cfg
+# ===============================================================
+
+
 async def update_qb_options():
     if not qbit_options:
         if not TorrentManager.qbittorrent:
-            LOGGER.warning(
-                "qBittorrent is not initialized. Skipping qBittorrent options update."
-            )
+            LOGGER.warning("qBittorrent is not initialized. Skipping update.")
             return
         opt = await TorrentManager.qbittorrent.app.preferences()
         qbit_options.update(opt)
@@ -45,9 +61,7 @@ async def update_qb_options():
             if k.startswith("rss"):
                 del qbit_options[k]
         qbit_options["web_ui_password"] = "admin"
-        await TorrentManager.qbittorrent.app.set_preferences(
-            {"web_ui_password": "admin"}
-        )
+        await TorrentManager.qbittorrent.app.set_preferences({"web_ui_password": "admin"})
     else:
         await TorrentManager.qbittorrent.app.set_preferences(qbit_options)
 
@@ -76,6 +90,7 @@ async def load_settings():
         if await aiopath.exists(p):
             await rmtree(p, ignore_errors=True)
     await database.connect()
+
     if database.db is not None:
         BOT_ID = Config.BOT_TOKEN.split(":", 1)[0]
         try:
@@ -87,6 +102,7 @@ async def load_settings():
             }
         except ModuleNotFoundError:
             config_file = {}
+
         config_file.update(
             {
                 key: value.strip() if isinstance(value, str) else value
@@ -95,56 +111,44 @@ async def load_settings():
             }
         )
 
-        old_config = await database.db.settings.deployConfig.find_one(
-            {"_id": BOT_ID}, {"_id": 0}
-        )
+        old_config = await database.db.settings.deployConfig.find_one({"_id": BOT_ID}, {"_id": 0})
+
         if old_config is None:
-            await database.db.settings.deployConfig.replace_one(
-                {"_id": BOT_ID}, config_file, upsert=True
-            )
+            await database.db.settings.deployConfig.replace_one({"_id": BOT_ID}, config_file, upsert=True)
+
         if old_config and old_config != config_file:
             LOGGER.info("Saving.. Deploy Config imported from Bot")
-            await database.db.settings.deployConfig.replace_one(
-                {"_id": BOT_ID}, config_file, upsert=True
-            )
+            await database.db.settings.deployConfig.replace_one({"_id": BOT_ID}, config_file, upsert=True)
             config_dict = (
-                await database.db.settings.config.find_one({"_id": BOT_ID}, {"_id": 0})
-                or {}
+                await database.db.settings.config.find_one({"_id": BOT_ID}, {"_id": 0}) or {}
             )
             config_dict.update(config_file)
             if config_dict:
+                _sanitize_types(config_dict)
                 Config.load_dict(config_dict)
         else:
             LOGGER.info("Updating.. Saved Config imported from MongoDB")
-            config_dict = await database.db.settings.config.find_one(
-                {"_id": BOT_ID}, {"_id": 0}
-            )
+            config_dict = await database.db.settings.config.find_one({"_id": BOT_ID}, {"_id": 0})
             if config_dict:
+                _sanitize_types(config_dict)
                 Config.load_dict(config_dict)
 
-        if pf_dict := await database.db.settings.files.find_one(
-            {"_id": BOT_ID}, {"_id": 0}
-        ):
+        # Restore files from DB
+        if pf_dict := await database.db.settings.files.find_one({"_id": BOT_ID}, {"_id": 0}):
             for key, value in pf_dict.items():
                 if value:
                     file_ = key.replace("__", ".")
                     async with aiopen(file_, "wb+") as f:
                         await f.write(value)
 
-        if a2c_options := await database.db.settings.aria2c.find_one(
-            {"_id": BOT_ID}, {"_id": 0}
-        ):
+        if a2c_options := await database.db.settings.aria2c.find_one({"_id": BOT_ID}, {"_id": 0}):
             aria2_options.update(a2c_options)
 
         if not Config.DISABLE_TORRENTS:
-            if qbit_opt := await database.db.settings.qbittorrent.find_one(
-                {"_id": BOT_ID}, {"_id": 0}
-            ):
+            if qbit_opt := await database.db.settings.qbittorrent.find_one({"_id": BOT_ID}, {"_id": 0}):
                 qbit_options.update(qbit_opt)
 
-        if nzb_opt := await database.db.settings.nzb.find_one(
-            {"_id": BOT_ID}, {"_id": 0}
-        ):
+        if nzb_opt := await database.db.settings.nzb.find_one({"_id": BOT_ID}, {"_id": 0}):
             if await aiopath.exists("sabnzbd/SABnzbd.ini.bak"):
                 await remove("sabnzbd/SABnzbd.ini.bak")
             ((key, value),) = nzb_opt.items()
@@ -153,6 +157,7 @@ async def load_settings():
                 await f.write(value)
             LOGGER.info("Loaded.. Sabnzbd Data from MongoDB")
 
+        # Load users data
         if await database.db.users[BOT_ID].find_one():
             rows = database.db.users[BOT_ID].find({})
             async for row in rows:
@@ -187,6 +192,7 @@ async def load_settings():
                 user_data[uid] = row
             LOGGER.info("Users Data has been imported from MongoDB")
 
+        # Load RSS
         if await database.db.rss[BOT_ID].find_one():
             rows = database.db.rss[BOT_ID].find({})
             async for row in rows:
@@ -199,14 +205,10 @@ async def load_settings():
 async def save_settings():
     if database.db is None:
         return
-    config_file = Config.get_all()
-    await database.db.settings.config.update_one(
-        {"_id": TgClient.ID}, {"$set": config_file}, upsert=True
-    )
+    config_file = Config.to_dict()
+    await database.db.settings.config.update_one({"_id": TgClient.ID}, {"$set": config_file}, upsert=True)
     if await database.db.settings.aria2c.find_one({"_id": TgClient.ID}) is None:
-        await database.db.settings.aria2c.update_one(
-            {"_id": TgClient.ID}, {"$set": aria2_options}, upsert=True
-        )
+        await database.db.settings.aria2c.update_one({"_id": TgClient.ID}, {"$set": aria2_options}, upsert=True)
     if await database.db.settings.qbittorrent.find_one({"_id": TgClient.ID}) is None:
         await database.save_qbit_settings()
     if await database.db.settings.nzb.find_one({"_id": TgClient.ID}) is None:
@@ -226,9 +228,7 @@ async def update_variables():
         Config.LEECH_SPLIT_SIZE = TgClient.MAX_SPLIT_SIZE
 
     Config.HYBRID_LEECH = bool(Config.HYBRID_LEECH and TgClient.IS_PREMIUM_USER)
-    Config.USER_TRANSMISSION = bool(
-        Config.USER_TRANSMISSION and TgClient.IS_PREMIUM_USER
-    )
+    Config.USER_TRANSMISSION = bool(Config.USER_TRANSMISSION and TgClient.IS_PREMIUM_USER)
 
     if Config.AUTHORIZED_CHATS:
         aid = Config.AUTHORIZED_CHATS.split()
@@ -257,41 +257,6 @@ async def update_variables():
         drives_ids.append(Config.GDRIVE_ID)
         index_urls.append(Config.INDEX_URL)
 
-    if not Config.IMDB_TEMPLATE:
-        Config.IMDB_TEMPLATE = """
-<b>Title: </b> {title} [{year}]
-<b>Also Known As:</b> {aka}
-<b>Rating ⭐️:</b> <i>{rating}</i>
-<b>Release Info: </b> <a href="{url_releaseinfo}">{release_date}</a>
-<b>Genre: </b>{genres}
-<b>IMDb URL:</b> {url}
-<b>Language: </b>{languages}
-<b>Country of Origin : </b> {countries}
-
-<b>Story Line: </b><code>{plot}</code>
-
-<a href="{url_cast}">Read More ...</a>"""
-
-    if await aiopath.exists("list_drives.txt"):
-        async with aiopen("list_drives.txt", "r+") as f:
-            lines = await f.readlines()
-            for line in lines:
-                temp = line.split()
-                drives_ids.append(temp[1])
-                drives_names.append(temp[0].replace("_", " "))
-                if len(temp) > 2:
-                    index_urls.append(temp[2])
-                else:
-                    index_urls.append("")
-
-    if await aiopath.exists("shortener.txt"):
-        async with aiopen("shortener.txt", "r+") as f:
-            lines = await f.readlines()
-            for line in lines:
-                temp = line.strip().split()
-                if len(temp) == 2:
-                    shortener_dict[temp[0]] = temp[1]
-
 
 async def load_configurations():
     if not await aiopath.exists(".netrc"):
@@ -314,17 +279,13 @@ async def load_configurations():
     if await aiopath.exists("cfg.zip"):
         if await aiopath.exists("/JDownloader/cfg"):
             await rmtree("/JDownloader/cfg", ignore_errors=True)
-        await (
-            await create_subprocess_exec("7z", "x", "cfg.zip", "-o/JDownloader")
-        ).wait()
+        await (await create_subprocess_exec("7z", "x", "cfg.zip", "-o/JDownloader")).wait()
 
     if await aiopath.exists("accounts.zip"):
         if await aiopath.exists("accounts"):
             await rmtree("accounts")
         await (
-            await create_subprocess_exec(
-                "7z", "x", "-o.", "-aoa", "accounts.zip", "accounts/*.json"
-            )
+            await create_subprocess_exec("7z", "x", "-o.", "-aoa", "accounts.zip", "accounts/*.json")
         ).wait()
         await (await create_subprocess_exec("chmod", "-R", "777", "accounts")).wait()
         await remove("accounts.zip")
@@ -341,3 +302,4 @@ async def load_configurations():
             await TorrentManager.qbittorrent.app.set_preferences(qbit_options)
         except Exception as e:
             LOGGER.error(f"Failed to configure qBittorrent: {e}")
+                    
