@@ -30,11 +30,9 @@ from .tg_client import TgClient
 from .torrent_manager import TorrentManager
 
 
-# ============================================================
-# Type sanitization utility to fix string-based numeric values
-# ============================================================
+# ====================== TYPE FIXER ============================
 def _sanitize_types(cfg: dict):
-    """Convert MongoDB string values into correct Python types."""
+    """Convert MongoDB string values into proper Python types."""
     for key, value in list(cfg.items()):
         if isinstance(value, str):
             v = value.strip().lower()
@@ -48,7 +46,7 @@ def _sanitize_types(cfg: dict):
             elif v in ("true", "false"):
                 cfg[key] = v == "true"
     return cfg
-# ============================================================
+# ===============================================================
 
 
 async def update_qb_options():
@@ -115,32 +113,37 @@ async def load_settings():
 
         old_config = await database.db.settings.deployConfig.find_one({"_id": BOT_ID}, {"_id": 0})
 
-        if old_config is None:
-            await database.db.settings.deployConfig.replace_one({"_id": BOT_ID}, config_file, upsert=True)
-
+        # --------------------- FIXED MERGING LOGIC ----------------------
         if old_config and old_config != config_file:
             LOGGER.info("Saving.. Deploy Config imported from Bot")
             await database.db.settings.deployConfig.replace_one({"_id": BOT_ID}, config_file, upsert=True)
             config_dict = (
                 await database.db.settings.config.find_one({"_id": BOT_ID}, {"_id": 0}) or {}
             )
-            config_dict.update(config_file)
-            if config_dict:
-                config_dict = _sanitize_types(config_dict)
-                Config.load_dict(config_dict)
+            # Merge both configs — keep DB values but fill missing keys from file
+            merged_dict = {**config_file, **config_dict}
+            _sanitize_types(merged_dict)
+
+            # Ensure numeric defaults are present
+            for key in ["BOT_MAX_TASKS", "QUEUE_ALL", "QUEUE_DOWNLOAD", "QUEUE_UPLOAD"]:
+                if key not in merged_dict:
+                    merged_dict[key] = 0
+
+            Config.load_dict(merged_dict)
+            await database.db.settings.config.replace_one({"_id": BOT_ID}, merged_dict, upsert=True)
         else:
             LOGGER.info("Updating.. Saved Config imported from MongoDB")
-            config_dict = await database.db.settings.config.find_one({"_id": BOT_ID}, {"_id": 0})
-            if config_dict:
-                config_dict = _sanitize_types(config_dict)
-                Config.load_dict(config_dict)
+            config_dict = await database.db.settings.config.find_one({"_id": BOT_ID}, {"_id": 0}) or {}
 
-        # 🔹 force save back sanitized values to MongoDB
-        await database.db.settings.config.update_one(
-            {"_id": BOT_ID},
-            {"$set": Config.get_all()},
-            upsert=True,
-        )
+            # Fill missing numeric defaults if not present
+            for key in ["BOT_MAX_TASKS", "QUEUE_ALL", "QUEUE_DOWNLOAD", "QUEUE_UPLOAD"]:
+                if key not in config_dict:
+                    config_dict[key] = 0
+
+            _sanitize_types(config_dict)
+            Config.load_dict(config_dict)
+            await database.db.settings.config.replace_one({"_id": BOT_ID}, config_dict, upsert=True)
+        # ---------------------------------------------------------------
 
         # Restore files from DB
         if pf_dict := await database.db.settings.files.find_one({"_id": BOT_ID}, {"_id": 0}):
@@ -183,10 +186,16 @@ async def load_settings():
                     dir_path = ospath.dirname(file_path)
                     if not await aiopath.exists(dir_path):
                         await makedirs(dir_path)
-                    async with aiopen(file_path, "wb+") as f:
-                        if isinstance(content, str):
-                            content = content.encode("utf-8")
-                        await f.write(content)
+                    if file_path.startswith("cookies/") and file_path.endswith(".txt"):
+                        async with aiopen(file_path, "wb") as f:
+                            if isinstance(content, str):
+                                content = content.encode("utf-8")
+                            await f.write(content)
+                    else:
+                        async with aiopen(file_path, "wb+") as f:
+                            if isinstance(content, str):
+                                content = content.encode("utf-8")
+                            await f.write(content)
 
                 for key, path in paths.items():
                     if row.get(key):
@@ -305,4 +314,4 @@ async def load_configurations():
             await TorrentManager.qbittorrent.app.set_preferences(qbit_options)
         except Exception as e:
             LOGGER.error(f"Failed to configure qBittorrent: {e}")
-            
+        
