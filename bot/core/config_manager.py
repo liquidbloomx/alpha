@@ -222,7 +222,7 @@ class Config:
             if isinstance(value, int):
                 return value
             try:
-                return int(value)
+                return int(float(value))
             except (ValueError, TypeError):
                 return original_value
         elif isinstance(original_value, float):
@@ -261,6 +261,19 @@ class Config:
                         value = []
                 value = cls._convert_env_type(key, value)
                 setattr(cls, key, value)
+
+        # ✅ Force numeric fields to always be integers
+        numeric_fields = [
+            "BOT_MAX_TASKS", "USER_MAX_TASKS",
+            "QUEUE_ALL", "QUEUE_DOWNLOAD", "QUEUE_UPLOAD",
+            "USER_TIME_INTERVAL"
+        ]
+        for field in numeric_fields:
+            val = getattr(cls, field, None)
+            try:
+                setattr(cls, field, int(float(val or 0)))
+            except Exception:
+                setattr(cls, field, 0)
 
         for key in ["BOT_TOKEN", "OWNER_ID", "TELEGRAM_API", "TELEGRAM_HASH"]:
             value = getattr(cls, key)
