@@ -9,7 +9,7 @@ USER_SESSION_STRING = ""
 CMD_SUFFIX = ""
 AUTHORIZED_CHATS = ""
 SUDO_USERS = ""
-DATABASE_URL = "mongodb+srv://perexdude:perexdude@cluster0.k0pvf3o.mongodb.net/?appName=Cluster0"
+DATABASE_URL = ""
 STATUS_LIMIT = 4
 DEFAULT_UPLOAD = "rc"
 STATUS_UPDATE_INTERVAL = 15
