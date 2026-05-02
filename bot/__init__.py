@@ -19,6 +19,10 @@ from logging import (
 from os import cpu_count
 from time import time
 
+# FIX: Create the event loop BEFORE Pyrogram is imported
+bot_loop = new_event_loop()
+set_event_loop(bot_loop)
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from pyrogram import utils as pyroutils
 
@@ -37,9 +41,6 @@ getLogger("aiohttp").setLevel(WARNING)
 pyroutils.MIN_CHAT_ID = -999999999999
 pyroutils.MIN_CHANNEL_ID = -100999999999999
 bot_start_time = time()
-
-bot_loop = new_event_loop()
-set_event_loop(bot_loop)
 
 basicConfig(
     format="[%(asctime)s] [%(levelname)s] - %(message)s",  #  [%(filename)s:%(lineno)d]
